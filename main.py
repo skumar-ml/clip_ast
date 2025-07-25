@@ -51,7 +51,7 @@ def parse_args():
                         help="Batch size for training.")
     p_train.add_argument("--k", type=int, default=6,
                         help="Top-K sub-layers per block to fine-tune in Stage 2.")
-    p_train.add_argument("--lmbd", type=float, nargs=3, default=(0.5, 0.5, 1.0),
+    p_train.add_argument("--lmbd", type=float, nargs=3, default=(1.0, 1.0, 1.0),
                         metavar=("IMG", "TXT", "KL"), 
                         help="Weights for SCL losses (image L1, text L1, KL divergence).")
     p_train.add_argument("--out", type=str, default="ast_model.pt",

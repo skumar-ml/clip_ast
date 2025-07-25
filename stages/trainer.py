@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Tuple
 
 import torch
+from torch.optim.lr_scheduler import LinearLR, CosineAnnealingLR, SequentialLR
 from tqdm import tqdm
 import open_clip
 
@@ -88,6 +89,10 @@ class Trainer:
         scores: dict[str, float] = {}
         eps = 1e-8
         
+        # Create mapping from optimizer state indices to parameter names
+        optimizer_params = self.optimizer.param_groups[0]['params']
+        param_to_name = {id(p): name for name, p in name_to_param.items()}
+        
         # Compute importance scores
         for pid, s in state.items():
             if "exp_avg_sq" not in s:
@@ -95,11 +100,13 @@ class Trainer:
             v = s["exp_avg_sq"]  # AdamW second moment
             score = torch.mean(1.0 / torch.sqrt(v + eps)).item()
             
-            # Find parameter name for this ID
-            for n, p in name_to_param.items():
-                if id(p) == pid:
-                    scores[n] = score
-                    break
+            # Map optimizer state index to parameter name
+            if pid < len(optimizer_params):
+                param = optimizer_params[pid]
+                param_id = id(param)
+                if param_id in param_to_name:
+                    param_name = param_to_name[param_id]
+                    scores[param_name] = score
         
         # Group parameters by transformer block
         def group_key(n):
@@ -138,15 +145,35 @@ class Trainer:
         # Create new optimizer with selected parameters and Stage 2 learning rate
         self.optimizer = torch.optim.AdamW(
             filter(lambda p: p.requires_grad, self.model.parameters()),
-            lr=5e-6,  # Stage 2 learning rate (lower)
+            lr=1e-6,  # Stage 2 learning rate (lower)
             weight_decay=1e-4
+        )
+        
+        # Learning rate scheduler for Stage 2
+        total_steps_stage2 = self.stage2_epochs * len(self.loader)
+        warmup_steps_stage2 = int(0.1 * total_steps_stage2)  # 10% warmup
+        
+        warmup_scheduler = LinearLR(
+            self.optimizer,
+            start_factor=0.1,
+            end_factor=1.0,
+            total_iters=warmup_steps_stage2
+        )
+        cosine_scheduler = CosineAnnealingLR(
+            self.optimizer,
+            T_max=total_steps_stage2 - warmup_steps_stage2
+        )
+        
+        self.scheduler = SequentialLR(
+            self.optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler],
+            milestones=[warmup_steps_stage2]
         )
         
     def _train_stage1_epoch(self, epoch):
         """Train one epoch of Stage 1."""
-        self.model.train()
-        total_loss = 0
-        num_batches = 0
+        stage_1_model = copy.deepcopy(self.model)
+        stage_1_model.train()
         
         for imgs, labels in tqdm(self.loader, desc=f"Stage 1 - Epoch {epoch}"):
             imgs, labels = imgs.to(self.device), labels.to(self.device)
@@ -158,18 +185,12 @@ class Trainer:
             # Cross-entropy loss only
             loss = cross_entropy_loss(
                 img_feat, self.text_features_frozen, labels, self.logit_scale
-            )
+            )            
             
             # Backward pass
             self.optimizer.zero_grad()
             loss.backward()
-            self.optimizer.step()
-            
-            total_loss += loss.item()
-            num_batches += 1
-        
-        avg_loss = total_loss / num_batches
-        print(f"[CLIP-AST] Stage 1 - Epoch {epoch}: Loss = {avg_loss:.4f}")
+            self.optimizer.step()                              
         
     def _train_stage2_epoch(self, epoch):
         """Train one epoch of Stage 2."""
@@ -177,6 +198,8 @@ class Trainer:
         total_loss = 0
         total_ce = 0
         total_scl = 0
+        correct = 0
+        total = 0
         num_batches = 0
         
         for imgs, labels in tqdm(self.loader, desc=f"Stage 2 - Epoch {epoch}"):
@@ -206,10 +229,18 @@ class Trainer:
             scl_loss = self.lmbd_img * img_l1 + self.lmbd_txt * txt_l1 + self.lmbd_kl * kl
             total_loss_batch = ce_loss + scl_loss
 
+            # Calculate training accuracy
+            with torch.no_grad():
+                logits = self.logit_scale * img_feat @ self.text_features_frozen.T
+                predictions = logits.argmax(dim=-1)
+                correct += (predictions == labels).sum().item()
+                total += labels.size(0)
+
             # Backward pass
             self.optimizer.zero_grad()
             total_loss_batch.backward()
             self.optimizer.step()
+            self.scheduler.step()
             
             total_loss += total_loss_batch.item()
             total_ce += ce_loss.item()
@@ -219,7 +250,9 @@ class Trainer:
         avg_loss = total_loss / num_batches
         avg_ce = total_ce / num_batches
         avg_scl = total_scl / num_batches
-        print(f"[CLIP-AST] Stage 2 - Epoch {epoch}: Total = {avg_loss:.4f}, CE = {avg_ce:.4f}, SCL = {avg_scl:.4f}")
+        accuracy = 100.0 * correct / total
+        current_lr = self.scheduler.get_last_lr()[0]
+        print(f"[CLIP-AST] Stage 2 - Epoch {epoch}: Total = {avg_loss:.4f}, CE = {avg_ce:.4f}, SCL = {avg_scl:.4f}, Train Accuracy = {accuracy:.2f}%, LR = {current_lr:.2e}")
 
     def _evaluate(self, epoch):
         """Evaluate the model on the evaluation dataset."""
@@ -243,9 +276,8 @@ class Trainer:
                 correct += (predictions == labels).sum().item()
                 total += labels.size(0)
         
-        accuracy = 100.0 * correct / total
-        stage = "Stage 1" if epoch <= self.stage1_epochs else "Stage 2"
-        print(f"[CLIP-AST] {stage} - Epoch {epoch}: Evaluation Accuracy = {accuracy:.2f}%")
+        accuracy = 100.0 * correct / total        
+        print(f"[CLIP-AST] Epoch {epoch}: Evaluation Accuracy = {accuracy:.2f}%")
         
         self.model.train()  # Switch back to training mode
 
@@ -253,23 +285,19 @@ class Trainer:
         """Run the unified training process."""
         print(f"[CLIP-AST] Starting training: {self.stage1_epochs} Stage 1 epochs + {self.stage2_epochs} Stage 2 epochs")
         
-        # Stage 1: Transformer fine-tuning
-        for epoch in range(1, self.stage1_epochs + 1):
+        # Stage 1: Transformer training to find parameter importances
+        for epoch in range(self.stage1_epochs):
             self._train_stage1_epoch(epoch)
-            
-            # Evaluation
-            if epoch % self.eval_freq == 0:
-                self._evaluate(epoch)
         
         # Transition to Stage 2
         self._transition_to_stage2()
         
         # Stage 2: Adaptive selective fine-tuning
-        for epoch in range(self.stage1_epochs + 1, self.total_epochs + 1):
+        for epoch in range(self.stage2_epochs):
             self._train_stage2_epoch(epoch)
             
             # Evaluation
-            if epoch % self.eval_freq == 0:
+            if epoch+1 % self.eval_freq == 0:
                 self._evaluate(epoch)
 
         # Save final model
