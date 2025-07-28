@@ -8,6 +8,9 @@ This script provides command-line interface for CLIP-AST few-shot learning.
 Usage:
     # Unified Training: Combined Stage 1 + Stage 2
     python main.py train --root ~/data --shots 16 --stage1_epochs 1 --stage2_epochs 30 --k 6 --out ckpts/ast_caltech.pt
+    
+    # Random Selection Mode: Skip Stage 1 and randomly select parameters
+    python main.py train --root ~/data --shots 16 --stage2_epochs 30 --k 6 --random_selection --out ckpts/ast_caltech_random.pt
 """
 
 from __future__ import annotations
@@ -44,7 +47,7 @@ def parse_args():
     p_train.add_argument("--shots", type=int, default=16,
                         help="Number of shots per class.")
     p_train.add_argument("--stage1_epochs", type=int, default=1,
-                        help="Number of Stage 1 epochs (transformer fine-tuning).")
+                        help="Number of Stage 1 epochs (transformer fine-tuning). Ignored if --random_selection is used.")
     p_train.add_argument("--stage2_epochs", type=int, default=30,
                         help="Number of Stage 2 epochs (adaptive selective fine-tuning).")
     p_train.add_argument("--batch_size", type=int, default=32,
@@ -62,6 +65,12 @@ def parse_args():
                         help="Device to use ('cpu', 'cuda', 'cuda:0', etc. or 'auto' for automatic detection).")
     p_train.add_argument("--eval_freq", type=int, default=5,
                         help="Frequency of evaluation (in epochs).")
+    
+    # Random selection mode
+    p_train.add_argument("--random_selection", action="store_true",
+                        help="Use random parameter selection instead of importance-based selection from Stage 1.")
+    p_train.add_argument("--random_seed", type=int, default=42,
+                        help="Random seed for parameter selection when using --random_selection.")
 
     return parser.parse_args()
 

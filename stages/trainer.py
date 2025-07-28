@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import random
 from collections import defaultdict
 from pathlib import Path
 from typing import List, Tuple
@@ -46,9 +47,11 @@ class Trainer:
         )
         
         # Training parameters
+        self.random_selection = args.random_selection
+        self.random_seed = args.random_seed
         self.stage1_epochs = args.stage1_epochs
         self.stage2_epochs = args.stage2_epochs
-        self.total_epochs = self.stage1_epochs + self.stage2_epochs
+        self.total_epochs = self.stage1_epochs + self.stage2_epochs if not self.random_selection else self.stage2_epochs
         self.k = args.k  # Top-K parameters per block for Stage 2
         self.stage2_lr = args.stage2_lr  # Stage 2 learning rate
         self.eval_freq = args.eval_freq
@@ -59,8 +62,13 @@ class Trainer:
         self.out = Path(args.out)
         self.out.parent.mkdir(parents=True, exist_ok=True)
         
-        # Initialize for Stage 1 (transformer blocks only)
-        self._setup_stage1()
+        # Initialize based on selection mode
+        if self.random_selection:
+            print(f"[CLIP-AST] Using random parameter selection mode (seed: {self.random_seed})")
+            self._setup_random_selection()
+        else:
+            print("[CLIP-AST] Using importance-based parameter selection mode")
+            self._setup_stage1()
         
     def _setup_stage1(self):
         """Setup for Stage 1: Fine-tune transformer blocks only."""
@@ -80,6 +88,91 @@ class Trainer:
             weight_decay=1e-4
         )
         
+    def _setup_random_selection(self):
+        """Setup for random parameter selection: Skip Stage 1 and directly select parameters."""
+        print("[CLIP-AST] Setting up random parameter selection")
+        
+        # Set random seed for reproducibility
+        random.seed(self.random_seed)
+        torch.manual_seed(self.random_seed)
+        
+        # Get all transformer parameters grouped by block
+        grouped_params = self._group_transformer_params()
+        
+        # Randomly select k parameters per block
+        trainable_names = set()
+        for block_name, param_list in grouped_params.items():
+            if len(param_list) <= self.k:
+                # If block has <= k parameters, select all
+                selected = param_list
+            else:
+                # Randomly select k parameters
+                selected = random.sample(param_list, self.k)
+            
+            for param_name in selected:
+                trainable_names.add(param_name)
+            
+            print(f"[CLIP-AST] Block {block_name}: Selected {len(selected)}/{len(param_list)} parameters")
+        
+        # Apply parameter selection
+        set_trainable(self.model, lambda n: n in trainable_names)
+        n_train = sum(p.requires_grad for p in self.model.parameters())
+        print(f"[CLIP-AST] Random selection: {n_train} trainable parameters (random {self.k} per block)")
+        
+        # Create frozen model copy for SCL
+        self.frozen_model = copy.deepcopy(self.model).eval().requires_grad_(False)
+        
+        # Create optimizer with selected parameters
+        self.optimizer = torch.optim.AdamW(
+            filter(lambda p: p.requires_grad, self.model.parameters()),
+            lr=self.stage2_lr, 
+            weight_decay=1e-4
+        )
+        
+        # Learning rate scheduler for Stage 2
+        total_steps_stage2 = self.stage2_epochs * len(self.loader)
+        warmup_steps_stage2 = int(0.1 * total_steps_stage2)  # 10% warmup
+        
+        warmup_scheduler = LinearLR(
+            self.optimizer,
+            start_factor=0.1,
+            end_factor=1.0,
+            total_iters=warmup_steps_stage2
+        )
+        cosine_scheduler = CosineAnnealingLR(
+            self.optimizer,
+            T_max=total_steps_stage2 - warmup_steps_stage2
+        )
+        
+        self.scheduler = SequentialLR(
+            self.optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler],
+            milestones=[warmup_steps_stage2]
+        )
+        
+    def _group_transformer_params(self):
+        """Group transformer parameters by block for random selection."""
+        grouped = defaultdict(list)
+        
+        for name, param in self.model.named_parameters():
+            if not param.requires_grad:
+                continue
+                
+            # Group parameters by transformer block
+            parts = name.split(".")
+            if parts[0] == "visual" and "transformer" in name:
+                if "resblocks" in parts:
+                    block_idx = parts[3]  # visual.transformer.resblocks.<idx>
+                    block_name = f"visual_block_{block_idx}"
+                    grouped[block_name].append(name)
+            elif parts[0] == "transformer" and "visual" not in name:
+                if "resblocks" in parts:
+                    block_idx = parts[2]  # transformer.resblocks.<idx>
+                    block_name = f"text_block_{block_idx}"
+                    grouped[block_name].append(name)
+        
+        return grouped
+    
     def _transition_to_stage2(self):
         """Transition from Stage 1 to Stage 2: Compute importance and select parameters."""
         print("[CLIP-AST] Transitioning to Stage 2: Computing parameter importance...")
@@ -284,22 +377,33 @@ class Trainer:
 
     def run(self):
         """Run the unified training process."""
-        print(f"[CLIP-AST] Starting training: {self.stage1_epochs} Stage 1 epochs + {self.stage2_epochs} Stage 2 epochs")
-        
-        # Stage 1: Transformer training to find parameter importances
-        for epoch in range(self.stage1_epochs):
-            self._train_stage1_epoch(epoch)
-        
-        # Transition to Stage 2
-        self._transition_to_stage2()
-        
-        # Stage 2: Adaptive selective fine-tuning
-        for epoch in range(self.stage2_epochs):
-            self._train_stage2_epoch(epoch)
+        if self.random_selection:
+            print(f"[CLIP-AST] Starting random selection training: {self.stage2_epochs} Stage 2 epochs")
             
-            # Evaluation
-            if (epoch+1) % self.eval_freq == 0:
-                self._evaluate(epoch)
+            # Skip Stage 1, go directly to Stage 2
+            for epoch in range(self.stage2_epochs):
+                self._train_stage2_epoch(epoch)
+                
+                # Evaluation
+                if (epoch+1) % self.eval_freq == 0:
+                    self._evaluate(epoch)
+        else:
+            print(f"[CLIP-AST] Starting importance-based training: {self.stage1_epochs} Stage 1 epochs + {self.stage2_epochs} Stage 2 epochs")
+            
+            # Stage 1: Transformer training to find parameter importances
+            for epoch in range(self.stage1_epochs):
+                self._train_stage1_epoch(epoch)
+            
+            # Transition to Stage 2
+            self._transition_to_stage2()
+            
+            # Stage 2: Adaptive selective fine-tuning
+            for epoch in range(self.stage2_epochs):
+                self._train_stage2_epoch(epoch)
+                
+                # Evaluation
+                if (epoch+1) % self.eval_freq == 0:
+                    self._evaluate(epoch)
 
         # Save final model
         torch.save({"model": self.model.state_dict()}, self.out)
