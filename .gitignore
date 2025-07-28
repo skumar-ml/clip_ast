@@ -9,3 +9,5 @@ logs/
 
 # checkpoints
 ckpts/
+data/
+Dassl.pytorch/
