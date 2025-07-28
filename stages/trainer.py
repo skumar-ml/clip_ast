@@ -50,6 +50,7 @@ class Trainer:
         self.stage2_epochs = args.stage2_epochs
         self.total_epochs = self.stage1_epochs + self.stage2_epochs
         self.k = args.k  # Top-K parameters per block for Stage 2
+        self.stage2_lr = args.stage2_lr  # Stage 2 learning rate
         self.eval_freq = args.eval_freq
         self.logit_scale = self.model.logit_scale.exp().detach()
         self.lmbd_img, self.lmbd_txt, self.lmbd_kl = args.lmbd
@@ -145,7 +146,7 @@ class Trainer:
         # Create new optimizer with selected parameters and Stage 2 learning rate
         self.optimizer = torch.optim.AdamW(
             filter(lambda p: p.requires_grad, self.model.parameters()),
-            lr=1e-6,  # Stage 2 learning rate (lower)
+            lr=self.stage2_lr, 
             weight_decay=1e-4
         )
         
@@ -297,7 +298,7 @@ class Trainer:
             self._train_stage2_epoch(epoch)
             
             # Evaluation
-            if epoch+1 % self.eval_freq == 0:
+            if (epoch+1) % self.eval_freq == 0:
                 self._evaluate(epoch)
 
         # Save final model
