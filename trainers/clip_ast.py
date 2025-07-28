@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 # CLIP imports
 from clip import clip
-from clip.simple_tokenizer import SimpleTokenizer as _Tokenizer
+from clip.model import CLIP
 
 # Import DASSL components
 from dassl.engine import TRAINER_REGISTRY, TrainerX
@@ -19,9 +19,7 @@ from dassl.metrics import compute_accuracy
 from dassl.optim import build_optimizer, build_lr_scheduler
 
 from trainers.losses import cross_entropy_loss, scl_losses
-from utils import set_trainable
-
-_tokenizer = _Tokenizer()
+from utils import set_trainable, build_text_features
 
 def load_clip_to_cpu(cfg):
     backbone_name = cfg.MODEL.BACKBONE.NAME
@@ -40,79 +38,28 @@ def load_clip_to_cpu(cfg):
 
     return model
 
-
 @TRAINER_REGISTRY.register()
 class CLIPAST(TrainerX):
-    """CLIP-AST trainer that combines Stage 1 and Stage 2 into a single process using DASSL."""
-    
-    def __init__(self, cfg):
-        # Store config
-        self.cfg = cfg
-        
-        # Extract CLIP-AST specific parameters
-        self.random_selection = getattr(cfg, 'RANDOM_SELECTION', False)
-        self.random_seed = getattr(cfg, 'RANDOM_SEED', 42)
-        self.stage1_epochs = getattr(cfg, 'STAGE1_EPOCHS', 1)
-        self.k = getattr(cfg, 'K', 6)
-        self.eval_freq = getattr(cfg, 'EVAL_FREQ', 5)
-        
-        # SCL loss weights
-        lmbd = getattr(cfg, 'LMBD', [0.5, 0.5, 1.0])
-        self.lmbd_img, self.lmbd_txt, self.lmbd_kl = lmbd
-        
-        # Device specification
-        self.device = getattr(cfg, 'DEVICE', 'cuda:0')  
-        
-        # Training state
-        self.frozen_model = None
-        self.text_tokens = None
-        
-        # Initialize DASSL trainer
-        super().__init__(cfg)
-        
-        # Setup text tokens after initialization
-        self._setup_text_tokens()
-        
-    def build_data_loader(self):
-        """Override to handle dataset setup and text tokens."""
-        # Use DASSL's data loading
-        super().build_data_loader()
-        
-        # Setup text tokens after data loading
-        if hasattr(self, 'dm') and hasattr(self.dm.dataset, 'classnames'):
-            self._setup_text_tokens()
-    
+    """CLIP-AST trainer that combines Stage 1 and Stage 2 into a single process using DASSL."""            
     def build_model(self):
-        """Build CLIP model."""
-        print(f"Building CLIP model on device: {self.device}")
-        print(f"Loading CLIP (backbone: {self.cfg.MODEL.BACKBONE.NAME})")
+        cfg = self.cfg
+        classnames = self.dm.dataset.classnames
+
+        # Build CLIP model
+        print(f"Building CLIP model (backbone: {self.cfg.MODEL.BACKBONE.NAME}) on device: {self.device}")
         self.model = load_clip_to_cpu(self.cfg)
         self.model.to(self.device)                
-        
         print(f"# params: {sum(p.numel() for p in self.model.parameters()):,}")
+
+        # Text tokens
+        self.text_tokens = build_text_features(clip.tokenize, classnames, self.dm.dataset.prompt_template, self.device)
         
         # Freeze all parameters initially
         for param in self.model.parameters():
             param.requires_grad = False
-        
-        # Don't set up optimizer or scheduler here - will be done in before_train
-        # Just register model temporarily (will be re-registered after parameter selection)
-        self.register_model("model", self.model, None, None)
-    
-    def _setup_text_tokens(self):
-        """Setup text tokens for class names."""
-        if hasattr(self, 'dm') and hasattr(self.dm.dataset, 'classnames'):
-            classnames = self.dm.dataset.classnames
-        elif hasattr(self, 'lab2cname'):
-            # Convert label to classname dict to list
-            classnames = [self.lab2cname[i] for i in range(len(self.lab2cname))]
-        else:
-            # Fallback - will be set later
-            return
-            
-        if hasattr(self, 'model') and self.model is not None:
-            texts = [f"a photo of a {name}" for name in classnames]
-            self.text_tokens = clip.tokenize(texts).to(self.device)
+
+        # Register model
+        self.register_model("dummy_model", copy.deepcopy(self.model), None, None)
     
     def _find_stage2_subblocks(self):
         """Find the sub-blocks that should be trainable for Stage 2.
@@ -122,8 +69,8 @@ class CLIPAST(TrainerX):
         """
         print("[CLIP-AST] Finding Stage 2 sub-blocks...")
         
-        if self.random_selection:
-            print(f"[CLIP-AST] Using random parameter selection (seed: {self.random_seed})")
+        if self.cfg.RANDOM_SELECTION:
+            print(f"[CLIP-AST] Using random parameter selection (seed: {self.cfg.RANDOM_SEED})")
             return self._random_parameter_selection()
         else:
             print("[CLIP-AST] Using CLIP-AST importance-based selection")
@@ -179,7 +126,7 @@ class CLIPAST(TrainerX):
         
         return trainable_names
     
-    def _run_stage1_training_on_copy(self, stage1_model):
+    def _run_stage1_training_on_copy(self, stage1_model : CLIP):
         """Run Stage 1 training on a model copy.
         
         Args:
@@ -199,8 +146,8 @@ class CLIPAST(TrainerX):
         
         # Stage 1 training loop
         stage1_model.train()
-        for epoch in range(self.stage1_epochs):
-            print(f"[CLIP-AST] Stage 1 Epoch {epoch + 1}/{self.stage1_epochs}")
+        for epoch in range(self.cfg.STAGE1_EPOCHS):
+            print(f"[CLIP-AST] Stage 1 Epoch {epoch + 1}/{self.cfg.STAGE1_EPOCHS}")
             
             total_loss = 0            
             num_batches = 0
@@ -209,15 +156,8 @@ class CLIPAST(TrainerX):
                 input, label = self.parse_batch_train(batch)
                 
                 # Forward pass
-                img_feat = stage1_model.encode_image(input)
-                img_feat = img_feat / img_feat.norm(dim=-1, keepdim=True)
-                
-                text_feat = stage1_model.encode_text(self.text_tokens)
-                text_feat = text_feat / text_feat.norm(dim=-1, keepdim=True)
-                
-                # Cross-entropy loss only
-                logit_scale = stage1_model.logit_scale.exp()
-                loss = cross_entropy_loss(img_feat, text_feat, label, logit_scale)
+                logits, _ = stage1_model.forward(input, self.text_tokens)
+                loss = cross_entropy_loss(logits, label)
                 
                 # Backward pass
                 stage1_optim.zero_grad()
@@ -310,7 +250,7 @@ class CLIPAST(TrainerX):
         trainable_names = set()
         for block, param_list in grouped.items():
             param_list.sort(key=lambda x: x[1], reverse=True)
-            selected_params = param_list[:self.k]
+            selected_params = param_list[:self.cfg.K]
             for name, score in selected_params:
                 trainable_names.add(name)
             print(f"[CLIP-AST] Block {block}: Selected {len(selected_params)}/{len(param_list)} parameters")
@@ -321,9 +261,10 @@ class CLIPAST(TrainerX):
         """Setup before training starts - find Stage 2 sub-blocks and prepare model."""
         super().before_train()
         
-        # Ensure text tokens are ready
-        if self.text_tokens is None:
-            self._setup_text_tokens()
+        # Create frozen model copy for SCL BEFORE parameter selection
+        self.frozen_model = copy.deepcopy(self.model).eval()
+        for param in self.frozen_model.parameters():
+            param.requires_grad = False
         
         # Find the sub-blocks that should be trainable for Stage 2
         trainable_names = self._find_stage2_subblocks()
@@ -333,19 +274,14 @@ class CLIPAST(TrainerX):
         n_train = sum(p.requires_grad for p in self.model.parameters())
         print(f"[CLIP-AST] Stage 2: {n_train} trainable parameters selected")
         
-        # Create frozen model copy for SCL
-        self.frozen_model = copy.deepcopy(self.model).eval()
-        for param in self.frozen_model.parameters():
-            param.requires_grad = False
-        
         # Create Stage 2 optimizer and scheduler
-        self.optim = build_optimizer(filter(lambda p: p.requires_grad, self.model.parameters()), self.cfg)
-        self.sched = build_lr_scheduler(self.optim, self.cfg)
+        self.optim = build_optimizer(filter(lambda p: p.requires_grad, self.model.parameters()), self.cfg.OPTIM)
+        self.sched = build_lr_scheduler(self.optim, self.cfg.OPTIM)
         
         # Register model with DASSL for Stage 2
         self.register_model("model", self.model, self.optim, self.sched)
         
-        print(f"[CLIP-AST] Setup complete. Starting Stage 2 training for {self.cfg.TRAIN.MAX_EPOCH} epochs")
+        print(f"[CLIP-AST] Setup complete. Starting Stage 2 training for {self.cfg.OPTIM.MAX_EPOCH} epochs")
     
     def forward_backward(self, batch):
         """Forward and backward pass - now only handles Stage 2 with SCL."""
@@ -367,7 +303,8 @@ class CLIPAST(TrainerX):
         
         # Cross-entropy loss
         logit_scale = self.model.logit_scale.exp()
-        ce_loss = cross_entropy_loss(img_feat, text_feat, label, logit_scale)
+        logits = logit_scale * img_feat @ text_feat.t()
+        ce_loss = cross_entropy_loss(logits, label)
         
         # Self-consistency losses
         img_l1, txt_l1, kl = scl_losses(
@@ -376,7 +313,7 @@ class CLIPAST(TrainerX):
             logit_scale
         )
         
-        scl_loss = self.lmbd_img * img_l1 + self.lmbd_txt * txt_l1 + self.lmbd_kl * kl
+        scl_loss = self.cfg.LMBD[0] * img_l1 + self.cfg.LMBD[1] * txt_l1 + self.cfg.LMBD[2] * kl
         total_loss = ce_loss + scl_loss
         
         # Backward pass
@@ -418,4 +355,4 @@ class CLIPAST(TrainerX):
         
         # Custom evaluation logic if needed
         if (self.epoch + 1) % self.eval_freq == 0:
-            print(f"[CLIP-AST] Stage 2 Epoch {self.epoch + 1}/{self.cfg.TRAIN.MAX_EPOCH}") 
+            print(f"[CLIP-AST] Stage 2 Epoch {self.epoch + 1}/{self.cfg.OPTIM.MAX_EPOCH}") 

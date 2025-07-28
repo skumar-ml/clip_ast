@@ -16,7 +16,6 @@ NEW_CNAMES = {
     "Motorbikes": "motorbike",
 }
 
-
 @DATASET_REGISTRY.register()
 class Caltech101(DatasetBase):
 
@@ -24,6 +23,7 @@ class Caltech101(DatasetBase):
 
     def __init__(self, cfg):
         root = os.path.abspath(os.path.expanduser(cfg.DATASET.ROOT))
+        self.prompt_template = "a photo of a {}."
         self.dataset_dir = os.path.join(root, self.dataset_dir)
         self.image_dir = os.path.join(self.dataset_dir, "101_ObjectCategories")
         self.split_path = os.path.join(self.dataset_dir, "split_zhou_Caltech101.json")
@@ -54,7 +54,7 @@ class Caltech101(DatasetBase):
                 with open(preprocessed, "wb") as file:
                     pickle.dump(data, file, protocol=pickle.HIGHEST_PROTOCOL)
 
-        subsample = cfg.DATASET.SUBSAMPLE_CLASSES
+        subsample = cfg.DATASET.SUBSAMPLE_CLASSES        
         train, val, test = OxfordPets.subsample_classes(train, val, test, subsample=subsample)
 
         super().__init__(train_x=train, val=val, test=test)

@@ -11,3 +11,4 @@ logs/
 ckpts/
 data/
 Dassl.pytorch/
+output/

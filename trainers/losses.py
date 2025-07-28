@@ -6,9 +6,8 @@ import torch
 import torch.nn.functional as F
 
 
-def cross_entropy_loss(image_feat, text_feat, labels, logit_scale):
-    """Standard cross-entropy loss for CLIP."""
-    logits = logit_scale * image_feat @ text_feat.t()  # (B, C)
+def cross_entropy_loss(logits, labels):
+    """Standard cross-entropy loss for CLIP."""    
     return F.cross_entropy(logits, labels)
 
 

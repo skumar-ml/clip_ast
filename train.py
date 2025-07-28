@@ -50,7 +50,7 @@ def reset_cfg(cfg, args):
     
     if hasattr(args, 'k'):
         cfg.K = args.k
-        
+
     if hasattr(args, 'random_selection'):
         cfg.RANDOM_SELECTION = args.random_selection
     
@@ -92,7 +92,6 @@ def setup_cfg(args):
     cfg.freeze()
     
     return cfg
-
 
 def main():
     parser = argparse.ArgumentParser()

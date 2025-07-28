@@ -7,16 +7,12 @@ from typing import List
 import torch
 import torch.nn as nn
 
-_PROMPT_TMPL = "a photo of a {}."
-
-def build_text_features(model, tokenizer, classnames: List[str], device: torch.device):
+def build_text_features(tokenizer, classnames: List[str], prompt_template: str, device: torch.device):
     """Tokenise prompts and get *frozen* text features."""
-    prompts = [_PROMPT_TMPL.format(name.replace("_", " ")) for name in classnames]
+    prompts = [prompt_template.format(name.replace("_", " ")) for name in classnames]
     with torch.no_grad():
         tokens = tokenizer(prompts).to(device)
-        text_feat = model.encode_text(tokens)  # (C, D)
-        text_feat = text_feat / text_feat.norm(dim=-1, keepdim=True)
-    return text_feat  # (C, D)
+    return tokens  # (C, D)
 
 
 def set_trainable(model: nn.Module, predicate):
