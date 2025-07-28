@@ -17,7 +17,7 @@ from typing import List
 
 import torch
 from tqdm import tqdm
-import open_clip
+import clip
 
 from datasets import ImageFolderFewShot
 from utils import build_text_features, get_device
@@ -126,11 +126,13 @@ def main():
     print(f"[Zero-Shot] Using device: {device}")
     
     # Load CLIP model
-    print(f"[Zero-Shot] Loading CLIP model: {args.model} with {args.pretrained} weights...")
-    model, _, _ = open_clip.create_model_and_transforms(
-        args.model, pretrained=args.pretrained, device=device
-    )
-    tokenizer = open_clip.get_tokenizer(args.model)
+    print(f"[Zero-Shot] Loading CLIP model: {args.model}...")
+    model, _ = clip.load(args.model, device=device)
+    
+    # Create tokenizer wrapper for compatibility
+    def tokenizer_wrapper(texts):
+        return clip.tokenize(texts)
+    tokenizer = tokenizer_wrapper
     print("[Zero-Shot] Model loaded successfully!")
     
     # Create dataset

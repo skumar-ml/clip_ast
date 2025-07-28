@@ -13,11 +13,12 @@ INPUT:
   PIXEL_STD: [0.26862954, 0.26130258, 0.27577711]
   TRANSFORMS: ["random_resized_crop", "random_flip", "normalize"]
 
+# For Stage 2 training
 OPTIM:
   NAME: "adamw"
-  LR: 0.00001  # Stage 1 learning rate
-  WEIGHT_DECAY: 0.0001
-  MAX_EPOCH: 31  # 1 Stage 1 + 30 Stage 2
+  LR: 1e-5
+  WEIGHT_DECAY: 1e-4
+  MAX_EPOCH: 30
   LR_SCHEDULER: "cosine"
   WARMUP_EPOCH: 1
   WARMUP_TYPE: "constant"
@@ -26,6 +27,10 @@ OPTIM:
 TRAIN:
   PRINT_FREQ: 20
 
+MODEL:
+  BACKBONE:
+    NAME: "ViT-B/16"
+
 TRAINER:
   NAME: "CLIPAST"
   
@@ -33,9 +38,7 @@ TRAINER:
 RANDOM_SELECTION: False
 RANDOM_SEED: 42
 STAGE1_EPOCHS: 1
-STAGE2_EPOCHS: 30
 K: 6  # Top-K parameters per transformer block
-STAGE2_LR: 0.0001  # Stage 2 learning rate
 EVAL_FREQ: 5
 LMBD: [0.5, 0.5, 1.0]  # [img_l1, txt_l1, kl] weights for SCL losses
 DEVICE: "cuda:0"  # Device to use (cuda:0, cuda:1, cpu, etc.)

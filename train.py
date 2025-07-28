@@ -39,7 +39,7 @@ def reset_cfg(cfg, args):
         cfg.RESUME = args.resume
     
     if args.seed:
-        cfg.SEED = args.seed
+        cfg.SEED = args.seed    
     
     if args.transforms:
         cfg.INPUT.TRANSFORMS = args.transforms
@@ -48,15 +48,9 @@ def reset_cfg(cfg, args):
     if hasattr(args, 'stage1_epochs'):
         cfg.STAGE1_EPOCHS = args.stage1_epochs
     
-    if hasattr(args, 'stage2_epochs'):
-        cfg.STAGE2_EPOCHS = args.stage2_epochs
-    
     if hasattr(args, 'k'):
         cfg.K = args.k
-    
-    if hasattr(args, 'stage2_lr'):
-        cfg.STAGE2_LR = args.stage2_lr
-    
+        
     if hasattr(args, 'random_selection'):
         cfg.RANDOM_SELECTION = args.random_selection
     
@@ -68,10 +62,8 @@ def extend_cfg(cfg):
     """Add CLIP-AST specific configuration."""
     cfg.RANDOM_SELECTION = False
     cfg.RANDOM_SEED = 42
-    cfg.STAGE1_EPOCHS = 1
-    cfg.STAGE2_EPOCHS = 30
+    cfg.STAGE1_EPOCHS = 1    
     cfg.K = 6
-    cfg.STAGE2_LR = 1e-4
     cfg.EVAL_FREQ = 5
     cfg.LMBD = [0.5, 0.5, 1.0]
     cfg.DEVICE = "cuda:0"  # Default device
@@ -150,10 +142,8 @@ def main():
     )
     
     # CLIP-AST specific arguments
-    parser.add_argument("--stage1-epochs", type=int, default=1, help="Stage 1 epochs")
-    parser.add_argument("--stage2-epochs", type=int, default=30, help="Stage 2 epochs")
+    parser.add_argument("--stage1-epochs", type=int, default=1, help="Stage 1 epochs")    
     parser.add_argument("--k", type=int, default=6, help="Top-K parameters per block")
-    parser.add_argument("--stage2-lr", type=float, default=1e-4, help="Stage 2 learning rate")
     parser.add_argument("--random-selection", action="store_true", help="Use random parameter selection")
     
     args = parser.parse_args()
