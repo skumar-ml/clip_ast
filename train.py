@@ -53,9 +53,6 @@ def reset_cfg(cfg, args):
 
     if hasattr(args, 'random_selection'):
         cfg.RANDOM_SELECTION = args.random_selection
-    
-    if hasattr(args, 'device'):
-        cfg.DEVICE = args.device
 
 
 def extend_cfg(cfg):
@@ -64,9 +61,11 @@ def extend_cfg(cfg):
     cfg.RANDOM_SEED = 42
     cfg.STAGE1_EPOCHS = 1    
     cfg.K = 6
-    cfg.EVAL_FREQ = 5
-    cfg.LMBD = [0.5, 0.5, 1.0]
+    cfg.LMBD = 0.0
     cfg.DEVICE = "cuda:0"  # Default device
+    
+    # Add OPTIM.EPS to support AdamW epsilon parameter
+    cfg.OPTIM.EPS = 1e-5
 
     cfg.DATASET.SUBSAMPLE_CLASSES = "all"  # all, base or new
 
@@ -119,7 +118,6 @@ def main():
         help="path to config file for dataset setup"
     )
     parser.add_argument("--trainer", type=str, default="CLIPAST", help="name of trainer")
-    parser.add_argument("--device", type=str, default="cuda:0", help="device to use (e.g., cuda:0, cuda:1, cpu)")
     parser.add_argument("--eval-only", action="store_true", help="evaluation only")
     parser.add_argument(
         "--model-dir",
@@ -143,7 +141,7 @@ def main():
     # CLIP-AST specific arguments
     parser.add_argument("--stage1-epochs", type=int, default=1, help="Stage 1 epochs")    
     parser.add_argument("--k", type=int, default=6, help="Top-K parameters per block")
-    parser.add_argument("--random-selection", action="store_true", help="Use random parameter selection")
+    parser.add_argument("--random-selection", action="store_true", help="Use random parameter selection") 
     
     args = parser.parse_args()
     

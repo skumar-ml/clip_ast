@@ -1,10 +1,10 @@
 # CLIP AST Few Shot
 DATALOADER:
   TRAIN_X:
-    BATCH_SIZE: 16
+    BATCH_SIZE: 32
   TEST:
-    BATCH_SIZE: 16
-  NUM_WORKERS: 4
+    BATCH_SIZE: 32
+  NUM_WORKERS: 8
 
 INPUT:
   SIZE: (224, 224)
@@ -16,13 +16,14 @@ INPUT:
 # For Stage 2 training
 OPTIM:
   NAME: "adamw"
-  LR: 1e-5
+  LR: 1e-7
   WEIGHT_DECAY: 1e-4
   MAX_EPOCH: 30
   LR_SCHEDULER: "cosine"
-  WARMUP_EPOCH: 1
-  WARMUP_TYPE: "constant"
-  WARMUP_CONS_LR: 1e-5
+  WARMUP_EPOCH: 3
+  WARMUP_TYPE: "linear"
+  # WARMUP_CONS_LR: 5e-9
+  WARMUP_MIN_LR: 1e-9
 
 TRAIN:
   PRINT_FREQ: 20
@@ -39,7 +40,6 @@ RANDOM_SELECTION: False
 RANDOM_SEED: 42
 STAGE1_EPOCHS: 1
 K: 6  # Top-K parameters per transformer block
-EVAL_FREQ: 5
-LMBD: [0.5, 0.5, 1.0]  # [img_l1, txt_l1, kl] weights for SCL losses
+LMBD: 1.0  # [img_l1, txt_l1, kl] weights for SCL losses
 DEVICE: "cuda:0"  # Device to use (cuda:0, cuda:1, cpu, etc.)
     
