@@ -9,7 +9,9 @@ I attempted to reproduce the few-shot results from the original CLIP-AST paper o
 - SCL (Self-Consistency Loss) coefficients
 - Learning rate and training schedule
 
-Unfortunately, the original paper does not specify these critical hyperparameter settings, making exact reproduction challenging.
+From my experiments, it seems that these two settings are vital in controlling the degree of overfitting to the train set. From what I can tell, the parameters need to be set for each dataset and shot. Unfortunately, the original paper does not specify these critical hyperparameter settings, making reproduction challenging.
+
+If you find errors in my implementation or are able to reproduce the results, please let me know (GitHub Issues or PRs)!
 
 ## Quick Start
 
