@@ -1,6 +1,6 @@
 # CLIP-AST: Open-Source Implementation
 
-An unofficial, open-source implementation of [CLIP-AST (Adaptive Selective Transformer)](https://openaccess.thecvf.com/content/CVPR2025/html/Zhang_Adaptive_Parameter_Selection_for_Tuning_Vision-Language_Models_CVPR_2025_paper.html) for few-shot learning, built on the DASSL framework.
+An unofficial, open-source implementation of [CLIP-AST (Adaptive Selective Tuning)](https://openaccess.thecvf.com/content/CVPR2025/html/Zhang_Adaptive_Parameter_Selection_for_Tuning_Vision-Language_Models_CVPR_2025_paper.html) for few-shot learning, built on the DASSL framework.
 
 ## ⚠️ Reproduction Note
 
