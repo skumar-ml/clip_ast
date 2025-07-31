@@ -1,6 +1,6 @@
 # CLIP-AST: Open-Source Implementation
 
-An open-source implementation of CLIP-AST (Adaptive Selective Transformer) for few-shot learning, built on the DASSL framework.
+An unofficial, open-source implementation of [CLIP-AST (Adaptive Selective Transformer)](https://openaccess.thecvf.com/content/CVPR2025/html/Zhang_Adaptive_Parameter_Selection_for_Tuning_Vision-Language_Models_CVPR_2025_paper.html) for few-shot learning, built on the DASSL framework.
 
 ## ⚠️ Reproduction Note
 
@@ -26,6 +26,8 @@ cd Dassl.pytorch
 pip install -e .
 cd ..
 ```
+
+For specific instructions on how to set up the dataset and DASSL, please refer to the docs in the [PromptSRC repo](https://github.com/muzairkhattak/PromptSRC/tree/main).
 
 ### Running Experiments
 
