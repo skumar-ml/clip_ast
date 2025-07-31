@@ -72,6 +72,12 @@ bash scripts/few_shot_sweeps.sh caltech101
 1. **Stage 1**: Fine-tune all transformer blocks, collect AdamW statistics
 2. **Stage 2**: Select top-K important parameters per block, fine-tune with self-consistency losses
 
+## Random Selection Baseline
+I added an option to randomly select the sub-blocks for finetuning. I wanted to use this as a baseline to compare against their selection approach. I didn't end up pursuing further, since I was having reproducibility issues.
+
+## DASSL Modification
+I made a small modification to DASSL's optimizer.py to pass in an EPS parameter to the AdamW optimizer. You will also need to make this modification to your own copy of the DASSL repo if you want control over the EPS parameter.
+
 ## License
 
 This open-source implementation is provided as-is for research purposes. 
